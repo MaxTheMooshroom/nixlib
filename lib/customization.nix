@@ -6,100 +6,101 @@ let
 in
 {
   /**
-    Evaluate the fixed-point of a package-set using each of
-    the following:
+    Construct a recursive attribute-set ("package-set") of packages and/or
+    nested package-sets, using a fixed-point operator over a package-function.
 
-    1. The fixed-point package-function's operator.
-    2. A scope of fallback values to use for missing parameters.
-    3. A set of parameters and/or overrides.
+    A fixed-point function is a function whose result can be partially
+    evaluated by providing the result as the argument. That is, `x -> x` for
+    some lazily-evaluated value `x`. An example would be
+    `self: { a = 0; b = self.a + 5; }`. If you tried to strictly evaluate
+    the function's result, you'd get an infinite-recursion error. However,
+    by evaluating the resulting attribute-set bit-by-bit, there are no
+    dependency issues.
 
-    If `fn` is not a function, it is passed to `builtins.import`
-    and the result of the import is used as the fixed-point
-    operator instead.
+    A package-function is a function with the form
+    `AttrSet -> (Package | Any)`, where `Package` has a "type" attribute with
+    the value `"derivation"`. The result of a package-function is not
+    technically guaranteed to be a package, bnut it is generally assumed to be.
 
-    The operator's package-function is automatically called with
-    the required arguments using a scope constructed by passing
-    `args` to `toAutoArgs`.
+    Composing a fixed-point over a package-function is non-trivial and cannot
+    be done using separate actions for each component. As such, instead of
+    using a fixed-point evaluated using the result of a package function, they
+    must be evaluated together using a "package-set-function", which describes
+    the entire composition of the fixed-point operator over the
+    package-function.
 
-    `callPackageSetWith` is intended to be partially
-    parameterised as such:
-
-    ```nix
-    callPackageSet = callPackageSetWith pkgs.newScope;
-    # or
-    callPackageSet = callPackageSetWith (x: pkgs // x);
-    package-sets = {
-      foo = callPackage ./foo.nix { };
-      set-bar = callPackageSet ./bar.nix { };
-    };
-    ```
-
-    As `libfoo` is just a package, nothing special occurs here. See
-    [lib.callPackageWith](https://noogle.dev/f/lib/callPackageWith/)
-    for more information.
-
-    `set-bar`, however, is a package-set (as determined by the use of
-    `callPackageSet` instead of `callPackage`), so we'll cover that
-    next.
-
-    Package-sets are defined as fixed-point operators over a
-    package-function, and take the following form:
-    ```nix
-    self: { ... }: {}
-    ```
-
-    The resulting package-set is the argument `self`, making
-    package-sets recursive. For this reason the result must be lazy,
-    [set-patterns]()
-    are impossible to use
-
-    Overrides or missing arguments can be supplied via `args` as such:
-
-    `./bar.nix` example:
-    ```nix
-    self:
-    { enableLibFoo ? false, ... }: {
-      libfoo = if enableLibFoo then self.lib else null;
-    }
-    ```
-    ```nix
-    libbar = callPackageSet ./bar.nix {
-      enableLibFoo = true;
-    };
-    ```
-
-    Because the package-set's `libbar` expects `libfoo` as an input,
-    and it is found as 
+    The arguments passed to the package-function component of the
+    package-set-function are derived first from a set of default arguments,
+    then from a second set of direct arguments / overrides. If the
+    package-function has a required parameter that is not present on either
+    attribute-set, then an error occurs.
 
     # Inputs
 
-    `toAutoArgs`
+    1. `autoArgs` (`AttrSet`)
 
-    : 1\. Function argument
+       The "default" arguments provided to the inner package-function.
 
-    `fn`
+    2. `f` (`Path | (a -> pkgs -> a)`)
 
-    : 2\. Function argument
+       The package-set-function, as described above.
 
-    `args`
+    3. `args` (`AttrSet`)
 
-    : 3\. Function argument
+       An attrset of arguments to pass to the inner package-function
+
+    # Output
+
+    `callPackageSetWith` returns a package-set (as described above) using
+    a set of default arguments (`autoArgs`) to pass to the inner
+    package-function of the package-set-function `f` and each of the resulting
+    package-set's nested package-sets, the package-set-function `f`, and a set
+    of arguments and/or overrides provided to `f`'s inner package-function.
 
     # Type
 
     ```
-    ImportedAs<E> ::= (value | import value) :: E
+    callPackageSetWith :: AttrSet
+        -> (Path | (a -> AttrSet -> a))
+        -> AttrSet
+        -> PackageSet
 
-    AttrSetOf<T> :: { <name> :: T }
+    PackageSet :: {
+      callPackage :: (Path | (AttrSet -> a)) -> AttrSet -> a,
+      callPackageSet :: (Path | (PackageSet -> pkgs -> PackageSet)) -> PackageSet -> (autoArgs // args) -> PackageSet,
+      overridePackage :: AttrSet -> self,
+      overrideSet :: (PackageSet -> PackageSet -> AttrSet) -> PackageSet,
+      packageSet :: a -> pkgs -> a,
 
-    callPackageSetWith ::
-      AttrSetOf<Package | Any>
-      -> ImportedAs<AttrSet -> a>
-      -> AttrSetOf<Package | Any>
-      -> a
+      # scope-compat attributes
+      packages :: self.packageSet,
+      overrideScope :: self.overrideSet,
+      newScope :: (AttrSet -> scope),
+    }
     ```
+
+    - `callPackage` (`(Path | (AttrSet -> a)) -> AttrSet -> a`)
+
+      A function that:
+
+      1. Takes a "package-function" `p`, or an expression that
+        evaluates to one when passed to `builtins.import`, which
+        takes an attribute set and returns a value `a` of
+        arbitrary type, but typically a package.
+      2. Takes an attribute set `args` with explicit attributes
+        to pass to `p`.
+      3. Calls `f` with attributes from the original attribute set
+        `attrs`
+
+    - `callPackageSet` (`(Path | (PackageSet -> (autoArgs // args) -> PackageSet)) -> PackageSet -> (autoArgs // args) -> PackageSet`).
+
+      A function that uses the current package-set to create a new, nested
+      package-set. It is a partially-parameterized form of the current
+      function `callPackageSetWith` that uses the current set's `autoArgs`,
+      updated with `args`, as the `autoArgs` parameter of nested package-sets'
+      `callPackage` and `callPackageSet` functions.
   */
-  callPackageSetWith = toAutoArgs: f: args:
+  callPackageSetWith = autoArgs: f: args:
     let
       f' =
         if    lib.isFunction f && lib.functionArgs f == {}
@@ -108,17 +109,30 @@ in
     in
     assert validFixedPoint f';
     let
-      callPackage = toAutoArgs args;
-      self = (callPackage (f' self) {}) // {
-        inherit callPackage;
-        _type = "pkg-set";
-        callPackageSet = lib'.callPackageSetWith (x: toAutoArgs (self // args // x));
-        overrideSet = g: lib'.callPackageSetWith toAutoArgs (lib.extends g f') args;
-        packageSet = f';
-        # aliases for compat with infra that expects a scope.
-        packages = self.packageSet;
-        overrideScope = self.overrideSet;
-      };
+      args' = autoArgs // args;
+
+      callPackage = lib.callPackageWith args';
+
+      self =
+        let
+          package = (callPackage (f' self) {});
+          set-members = {
+            _type = "pkg-set";
+
+            inherit callPackage;
+            callPackageSet = lib'.callPackageSetWith (args' // self);
+            overridePackage = x: lib'.callPackageSetWith autoArgs f' (args // x);
+            overrideSet = g: lib'.callPackageSetWith autoArgs (lib.extends g f') args;
+            packageSet = f';
+
+            # compat for infra that expects a scope.
+
+            packages = self.packageSet;
+            overrideScope = self.overrideSet;
+            newScope = x: lib.callPackageWith (args' // self // x);
+          };
+        in
+          package // set-members;
     in
-      builtins.removeAttrs self [ "overrideDerivation" ];
+      builtins.removeAttrs self [ "override" "overrideDerivation" ];
 }
