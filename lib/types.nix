@@ -83,7 +83,7 @@ let
 
   packageSet-member = types.oneOf [
     types.package
-    types.packageSet
+    types'.packageSet
   ];
 
   packageSet = types.submodule {
