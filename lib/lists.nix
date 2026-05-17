@@ -1,11 +1,15 @@
 { lib, lib', ... }:
 let
   lists' = lib'.lists;
+  trivial' = lib'.trivial;
 
   inherit (builtins)
+    add
+    elemAt
     foldl'
     genList
     head
+    length
     tail
     ;
 
@@ -57,4 +61,27 @@ in
       (acc: { idx, value }: f idx acc value)
       acc
       (lists'.enumerated1 list);
+
+  sublist = start: count: list:
+    let
+      threshold-max = N: x: lib'.trivial.ifElse (N < x) 0 x;
+
+      count' = threshold-max (length list) (start + count);
+      start' = lib'.trivial.min0 start;
+    in
+      builtins.genList
+        (lib'.turn (elemAt list) (add start'))
+        count';
+
+  /**
+    # Equivalence
+
+    ```
+    
+    ```
+  */
+  take = count:
+    trivial'.fanout
+      (lib'.turn genList elemAt)
+      (lib'.turn (lib.max count) length);
 }

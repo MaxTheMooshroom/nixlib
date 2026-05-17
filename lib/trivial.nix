@@ -1,6 +1,7 @@
 { lib, lib', ... }:
 let
   trivial' = lib'.trivial;
+  strings' = lib'.strings;
 
   inherit (lib.filesystem)
     pathIsDirectory
@@ -30,9 +31,18 @@ in
   eq  = a: b: b == a;
   neq = a: b: a != b;
 
-  swap  = x: f: f x;
-  turn  = f: g: x: f (g x);
-  /** Equivalent to `f: g: a: b: f (g a b)` */
+  swap    = x: f: f x;
+  dup     = f: x: f x x;
+  turn    = f: g: x: f (g x);
+  fanout  = f: g: x: (f x) (g x);
+
+  /**
+    # Equivalence
+
+    ```
+    f: g: a: b: f (g a b)
+    ```
+  */
   turn2 = with trivial'; turn turn turn;
 
   /**
@@ -60,8 +70,16 @@ in
 
     Arg :: Any
     ```
+
+    # Equivalence
+
+    ```
+    f: list: foldl' (f': x: f' x) f list
+    ```
   */
   callWith = builtins.foldl' lib.id;
+
+  negate = x: !x;
 
   /**
     Pass `x` to `f` and apply logical negation to the result.
@@ -98,7 +116,7 @@ in
     ```
   */
   const     = x: _: x;
-  true      = trivial'.const true;
+  True      = trivial'.const true;
   False     = trivial'.const false;
   Null      = trivial'.const null;
   EmptySet  = trivial'.const {};
@@ -128,7 +146,14 @@ in
     composeFunctions :: Any -> [(Any -> Any)] -> Any
     ```
   */
-  composeFunctions = builtins.foldl' trivial'.swap;
+  pipe = builtins.foldl' trivial'.swap;
+
+  min0 = lib.max 0;
+  max0 = lib.min 0;
+  thresholdMax = N: x: trivial'.ifElse (N <= x) 0 x;
+  clamp = lib.flip (trivial'.turn trivial'.turn2 lib.max) lib.min;
+
+  getLevenshteinFast = trivial'.turn builtins.filter strings'.levenshteinFast;
 
   isImportable = x:
     (lib.strings.isStringLike x)

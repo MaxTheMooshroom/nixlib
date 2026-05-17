@@ -1,6 +1,13 @@
 { lib, lib', ... }:
 let
   validFixedPoint = lib'.asserts.fixed-points.validate;
+
+  inherit (lib'.trivial)
+    const
+    getLevenshteinFast
+    negate
+    pipe
+    ;
 in
 {
   /**
@@ -100,11 +107,21 @@ in
       function `callPackageSetWith` that uses the current set's `autoArgs`,
       updated with `args`, as the `autoArgs` parameter of nested package-sets'
       `callPackage` and `callPackageSet` functions.
+
+    # TODO
+
+    document __internal: __internal is a list of package-set items that are
+    removed from the final result of the package-set, but still available to
+    self.callPackage and self.callPackageSet.
+
+    ```
+    callPackageSetWith {} (self: { dep, }: {  })
+    ````
   */
   callPackageSetWith = autoArgs: f: args:
     let
       f' =
-        if    lib.isFunction f && lib.functionArgs f == {}
+        if    lib.isFunction f
         then  f
         else  import f;
     in
@@ -112,11 +129,12 @@ in
     let
       args' = autoArgs // args;
 
-      callPackage = lib.callPackageWith args';
-
       self =
         let
-          package = (callPackage (f' self) {});
+          callPackage = lib.callPackageWith (args' // self);
+
+          package = (lib.callPackageWith args' (f' self) {});
+
           set-members = {
             _type = "pkg-set";
 
@@ -133,7 +151,8 @@ in
             newScope = x: lib.callPackageWith (args' // self // x);
           };
         in
-          package // set-members;
+          (removeAttrs package (["__internal"] ++ (package.__internal or [])))
+          // set-members;
     in
       builtins.removeAttrs self [ "override" "overrideDerivation" ];
 }
